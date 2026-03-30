@@ -13,7 +13,7 @@ import { CampaignStatus, ContactStatus } from '@/types'
 // ============================================================================
 
 export const CreateContactSchema = z.object({
-  name: z.string().min(1, 'Nome é obrigatório').max(100, 'Nome muito longo'),
+  name: z.string().max(100, 'Nome muito longo').optional().nullable().default(''),
   phone: z.string()
     .min(10, 'Telefone deve ter pelo menos 10 dígitos')
     .max(20, 'Telefone muito longo')

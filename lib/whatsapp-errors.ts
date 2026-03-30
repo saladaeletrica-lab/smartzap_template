@@ -283,11 +283,11 @@ export const WHATSAPP_ERRORS: Record<number, WhatsAppError> = {
   },
   131049: {
     code: 131049,
-    category: 'auth',
-    title: 'Phone number not registered',
-    userMessage: 'Número de telefone não registrado.',
-    action: 'Registre o número no Meta Business Suite.',
-    retryable: false,
+    category: 'recipient',
+    title: 'User frequency limit reached (Ecosystem Health)',
+    userMessage: 'Contato atingiu limite de recebimento de campanhas no WhatsApp.',
+    action: 'Aguarde 24h para tentar novamente ou envie uma mensagem normal/utilidade. O contato já recebeu o limite máximo de marketing do WhatsApp hoje.',
+    retryable: true,
   },
   10: {
     code: 10,

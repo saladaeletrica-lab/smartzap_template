@@ -7,10 +7,10 @@ export async function GET() {
     try {
         const projects = await templateProjectDb.getAll()
         return NextResponse.json(projects)
-    } catch (error) {
+    } catch (error: any) {
         console.error('Failed to fetch template projects:', error)
         return NextResponse.json(
-            { error: 'Failed to fetch template projects' },
+            { error: 'Failed to fetch template projects', details: error.message || error },
             { status: 500 }
         )
     }
@@ -23,10 +23,10 @@ export async function POST(request: Request) {
 
         const project = await templateProjectDb.create(body);
         return NextResponse.json(project)
-    } catch (error) {
+    } catch (error: any) {
         console.error('Failed to create template project:', error)
         return NextResponse.json(
-            { error: 'Failed to create template project' },
+            { error: 'Failed to create template project', details: error.message || error },
             { status: 500 }
         )
     }

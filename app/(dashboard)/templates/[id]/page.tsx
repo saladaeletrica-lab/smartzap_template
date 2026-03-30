@@ -79,14 +79,25 @@ export default function TemplateProjectDetailsPage() {
                         body: JSON.stringify(payload)
                     });
 
-                    if (!response.ok) throw new Error('Falha na API');
+                    let responseData;
+                    try {
+                        responseData = await response.json();
+                    } catch (e) {
+                         // unparsable
+                    }
 
-                    const result = await response.json();
+                    if (!response.ok) {
+                        throw new Error(responseData?.error || responseData?.details?.[0]?.error || 'Falha na API');
+                    }
 
-                    if (result.results && result.results[0] && result.results[0].success) {
+                    const result = responseData;
+
+                    if (result.success) {
+                        results.push(item.id);
+                    } else if (result.templates && result.templates[0] && result.templates[0].success) {
                         results.push(item.id);
                     } else {
-                        throw new Error(result.results?.[0]?.error || 'Erro desconhecido');
+                        throw new Error(result.error || result.details?.[0]?.error || 'Erro desconhecido');
                     }
                 } catch (e) {
                     console.error(`Erro ao enviar item ${item.name}`, e);

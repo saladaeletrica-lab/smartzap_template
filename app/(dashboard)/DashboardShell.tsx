@@ -540,7 +540,7 @@ export function DashboardShell({
         { path: '/', label: 'Dashboard', icon: LayoutDashboard },
         { path: '/campaigns', label: 'Campanhas', icon: MessageSquare },
         { path: '/workflows', label: 'Workflows', icon: Workflow, hidden: true }, // TODO: In development
-        { path: '/conversations', label: 'Conversas', icon: MessageCircle, hidden: true },
+        { path: '/conversations', label: 'Conversas', icon: MessageCircle },
         { path: '/templates', label: 'Templates', icon: FileText },
         { path: '/contacts', label: 'Contatos', icon: Users },
         { path: '/settings', label: 'Configurações', icon: Settings },

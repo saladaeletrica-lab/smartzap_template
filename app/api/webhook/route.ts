@@ -7,8 +7,7 @@ import {
   getUserFriendlyMessage,
   getErrorCategory
 } from '@/lib/whatsapp-errors'
-import { botDb, flowDb, botConversationDb, settingsDb } from '@/lib/supabase-db'
-
+import { botDb, flowDb, botConversationDb, botMessageDb, settingsDb } from '@/lib/supabase-db'
 
 // Get WhatsApp Access Token from settings or env
 async function getWhatsAppAccessToken(): Promise<string | null> {
@@ -319,13 +318,82 @@ export async function POST(request: NextRequest) {
         }
 
         // =====================================================================
-        // Process incoming messages (Chatbot Engine Disabled in Template)
+        // Process incoming messages (Inbox / Kanban)
         // =====================================================================
         const messages = change.value?.messages || []
-        for (const message of messages) {
-          const from = message.from
-          const messageType = message.type
-          console.log(`📩 Incoming message from ${from}: ${messageType} (Chatbot disabled)`)
+        const metadata = change.value?.metadata || {}
+        const phoneNumberId = metadata.phone_number_id
+
+        if (messages.length > 0 && phoneNumberId) {
+          // 1. Ensure we have an active Bot config for this phone number
+          let bot = await botDb.getByPhoneNumberId(phoneNumberId)
+          if (!bot) {
+            try {
+              // Create a default bot if none exists to hold the conversations
+              bot = await botDb.create({
+                name: 'Smartzap Inbox',
+                phoneNumberId: phoneNumberId
+              })
+              await botDb.activate(bot.id)
+              // Refetch to get the active bot
+              bot = await botDb.getByPhoneNumberId(phoneNumberId)
+            } catch (err) {
+              console.error('Failed to create default bot for Inbox:', err)
+            }
+          }
+
+          if (bot) {
+            for (const message of messages) {
+              const from = message.from
+              const messageType = message.type
+              const waMessageId = message.id
+              const contactName = change.value?.contacts?.[0]?.profile?.name || from
+              
+              console.log(`📩 Processing incoming message from ${from}: ${messageType}`)
+
+              // 2. Check if we already processed this message
+              const existingMsg = await botMessageDb.getByWaMessageId(waMessageId)
+              if (existingMsg) {
+                continue // Already processed
+              }
+
+              // 3. Find or create an active conversation
+              let conversation = await botConversationDb.getByContact(bot.id, from)
+              if (!conversation) {
+                conversation = await botConversationDb.create({
+                  botId: bot.id,
+                  contactPhone: from,
+                  contactName: contactName
+                })
+              } else if (conversation.contactName !== contactName) {
+                // Update contact name if changed
+                await botConversationDb.update(conversation.id, { contactName })
+              }
+
+              // 4. Save the actual message
+              let content: any = {}
+              if (messageType === 'text') content = { text: message.text?.body }
+              else if (messageType === 'image') content = { image: message.image }
+              else if (messageType === 'audio') content = { audio: message.audio }
+              else if (messageType === 'document') content = { document: message.document }
+              else if (messageType === 'interactive') content = { interactive: message.interactive }
+              else if (messageType === 'button') content = { button: message.button }
+              else content = { text: `[Mídia não suportada (${messageType})]` }
+
+              await botMessageDb.create({
+                conversationId: conversation.id,
+                waMessageId: waMessageId,
+                direction: 'inbound',
+                origin: 'contact' as any,
+                type: messageType as any,
+                content: content,
+                status: 'delivered'
+              })
+
+              // 5. Explicit update of last activity is done automatically by botMessageDb.create
+              console.log(`✅ Message from ${from} saved to Inbox`)
+            }
+          }
         }
       }
     }

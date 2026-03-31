@@ -216,7 +216,10 @@ export async function loginUser(password: string, email?: string): Promise<UserA
     // Use Supabase built-in auth to sign in
     // Note: since the backend doesn't inherently use PKCE flow (we parse token manually), 
     // we use standard email/password grant. We use .admin to bypass RLS issues on login.
-    const { data: authData, error: authError } = await supabase.admin.auth.signInWithPassword({
+    const adminSupabase = supabase.admin
+    if (!adminSupabase) throw new Error('Supabase admin não configurado')
+
+    const { data: authData, error: authError } = await adminSupabase.auth.signInWithPassword({
       email: targetEmail.trim(),
       password
     })
@@ -226,7 +229,7 @@ export async function loginUser(password: string, email?: string): Promise<UserA
       // If the password matches MASTER_PASSWORD, we auto-create the user!
       if (isMasterFallback) {
         console.log(`[LOGIN] MIGRATION: Auto-creating admin user for ${targetEmail}`);
-        const { error: createError } = await supabase.admin.auth.admin.createUser({
+        const { error: createError } = await adminSupabase.auth.admin.createUser({
           email: targetEmail.trim(),
           password,
           email_confirm: true,
@@ -235,7 +238,7 @@ export async function loginUser(password: string, email?: string): Promise<UserA
 
         if (!createError) {
           // Now login again
-          const retryAuth = await supabase.admin.auth.signInWithPassword({
+          const retryAuth = await adminSupabase.auth.signInWithPassword({
             email: targetEmail.trim(),
             password
           })
@@ -286,7 +289,8 @@ export async function logoutUser(): Promise<void> {
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
   if (token) {
      // Optional: Call supabase sign out if we want to invalidate it on server
-     await supabase.admin.auth.signOut()
+     const adminSupabase = supabase.admin
+     if (adminSupabase) await adminSupabase.auth.signOut()
   }
   cookieStore.delete(SESSION_COOKIE_NAME)
 }
@@ -323,7 +327,9 @@ export async function validateSession(): Promise<boolean> {
 
     // We no longer query our own db 'settings' for a session token
     // We let Supabase validate the token signature and expiration
-    const { data, error } = await supabase.admin.auth.getUser(sessionToken)
+    const adminSupabase = supabase.admin
+    if (!adminSupabase) return false
+    const { data, error } = await adminSupabase.auth.getUser(sessionToken)
     
     if (error || !data.user) {
        console.log('🔍 [validateSession] Token was invalid or expired');
@@ -347,7 +353,9 @@ export async function getCurrentSessionUser() {
   const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
   if (!sessionToken) return null;
 
-  const { data } = await supabase.admin.auth.getUser(sessionToken)
+  const adminSupabase = supabase.admin
+  if (!adminSupabase) return null
+  const { data } = await adminSupabase.auth.getUser(sessionToken)
   return data?.user || null
 }
 

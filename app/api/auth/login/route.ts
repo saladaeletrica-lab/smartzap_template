@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
     
     const body = await request.json()
-    const { password } = body
+    const { password, email } = body
     
     if (!password) {
       return NextResponse.json(
@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const result = await loginUser(password)
+    const result = await loginUser(password, email)
     
     if (!result.success) {
       return NextResponse.json(

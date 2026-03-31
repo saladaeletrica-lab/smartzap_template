@@ -38,7 +38,8 @@ export async function GET() {
       isConfigured: true,
       isSetup: status.isSetup,
       isAuthenticated: status.isAuthenticated,
-      company: status.company
+      company: status.company,
+      user: status.user
     }
 
     console.log('🔍 [AUTH-STATUS] Final response:', JSON.stringify(response, null, 2))

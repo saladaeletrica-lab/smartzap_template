@@ -8,13 +8,14 @@
 
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Lock, Eye, EyeOff, LogIn } from 'lucide-react'
+import { Lock, Eye, EyeOff, LogIn, Mail } from 'lucide-react'
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get('redirect') || '/'
 
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
@@ -66,7 +67,7 @@ function LoginForm() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        body: JSON.stringify({ password, email })
       })
 
       const data = await response.json()
@@ -102,6 +103,18 @@ function LoginForm() {
       {/* Card */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl">
         <form onSubmit={handleSubmit}>
+          <div className="relative mb-4">
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="E-mail (opcional na migração)"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-11 pr-4 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+              autoFocus
+            />
+          </div>
+
           <div className="relative">
             <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
             <input
@@ -110,7 +123,6 @@ function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Senha"
               className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-11 pr-11 py-3 text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-              autoFocus
             />
             <button
               type="button"

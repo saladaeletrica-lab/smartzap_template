@@ -37,6 +37,7 @@ export interface UserAuthResult {
   success: boolean
   error?: string
   company?: Company
+  user?: any // Supabase user info
 }
 
 // ============================================================================
@@ -97,7 +98,7 @@ export async function getCompany(): Promise<Company | null> {
     if (error || !data || data.length === 0) return null
 
     const settings: Record<string, string> = {}
-    data.forEach(row => {
+    data.forEach((row: any) => {
       settings[row.key] = row.value
     })
 
@@ -156,8 +157,10 @@ export async function completeSetup(
       upsertSetting('company_created_at', now)
     ])
 
-    // Create session after setup
-    await createSession()
+    // Create session after setup, we may not have JWT yet without login
+    // we'll pass a dummy token or wait for user to explicitly login. We'll skip session creation here
+    // so they are forced to do an actual login with the email/password we will configure in setup.
+    // await createSession('')
 
     return {
       success: true,
@@ -180,18 +183,12 @@ export async function completeSetup(
 // ============================================================================
 
 /**
- * Attempt login with password
- * Validates against MASTER_PASSWORD env var
+ * Attempt login with email and password
+ * Implements fallback migration for old MASTER_PASSWORD users
  */
-export async function loginUser(password: string): Promise<UserAuthResult> {
+export async function loginUser(password: string, email?: string): Promise<UserAuthResult> {
   if (!password) {
     return { success: false, error: 'Senha é obrigatória' }
-  }
-
-  // Check if MASTER_PASSWORD is configured
-  const masterPassword = process.env.MASTER_PASSWORD
-  if (!masterPassword) {
-    return { success: false, error: 'MASTER_PASSWORD não configurada nas variáveis de ambiente' }
   }
 
   // Check rate limiting
@@ -201,26 +198,83 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
   }
 
   try {
-    // Simple comparison with env var
-    const isValid = password === masterPassword
+    // Migration: Get master password and company email if we need fallback
+    const masterPassword = process.env.MASTER_PASSWORD
+    const isMasterFallback = !!masterPassword && password === masterPassword
+    
+    // Resolve which email to use
+    let targetEmail = email;
+    if (!targetEmail) {
+      const company = await getCompany();
+      targetEmail = company?.email;
+    }
 
-    if (!isValid) {
+    if (!targetEmail) {
+      return { success: false, error: 'E-mail é obrigatório para logar' }
+    }
+
+    // Use Supabase built-in auth to sign in
+    // Note: since the backend doesn't inherently use PKCE flow (we parse token manually), 
+    // we use standard email/password grant. We use .admin to bypass RLS issues on login.
+    const { data: authData, error: authError } = await supabase.admin.auth.signInWithPassword({
+      email: targetEmail.trim(),
+      password
+    })
+
+    if (authError) {
+      // MIGRATION STRATEGY: user might not exist in Supabase Auth yet
+      // If the password matches MASTER_PASSWORD, we auto-create the user!
+      if (isMasterFallback) {
+        console.log(`[LOGIN] MIGRATION: Auto-creating admin user for ${targetEmail}`);
+        const { error: createError } = await supabase.admin.auth.admin.createUser({
+          email: targetEmail.trim(),
+          password,
+          email_confirm: true,
+          user_metadata: { role: 'admin' }
+        })
+
+        if (!createError) {
+          // Now login again
+          const retryAuth = await supabase.admin.auth.signInWithPassword({
+            email: targetEmail.trim(),
+            password
+          })
+          
+          if (retryAuth.error || !retryAuth.data.session) {
+             await recordFailedAttempt()
+             return { success: false, error: 'Falha durante a migração da conta.' }
+          }
+          
+          await clearFailedAttempts()
+          await createSession(retryAuth.data.session.access_token)
+          const company = await getCompany()
+          return { success: true, company: company || undefined, user: retryAuth.data.user }
+        } else {
+             console.error('[LOGIN] MIGRATION FAILED:', createError)
+        }
+      }
+
       await recordFailedAttempt()
-      return { success: false, error: 'Senha incorreta' }
+      return { success: false, error: 'E-mail ou senha incorretos' }
+    }
+
+    if (!authData.session) {
+      await recordFailedAttempt()
+      return { success: false, error: 'Falha ao autenticar sessão com Supabase' }
     }
 
     // Clear failed attempts on success
     await clearFailedAttempts()
 
-    // Create session
-    await createSession()
+    // Create session (now saving the Supabase JWT instead of a UUID)
+    await createSession(authData.session.access_token)
 
     const company = await getCompany()
-    return { success: true, company: company || undefined }
+    return { success: true, company: company || undefined, user: authData.user }
 
   } catch (error) {
     console.error('Login error:', error)
-    return { success: false, error: 'Erro ao fazer login' }
+    return { success: false, error: 'Erro interno ao processar login' }
   }
 }
 
@@ -229,6 +283,11 @@ export async function loginUser(password: string): Promise<UserAuthResult> {
  */
 export async function logoutUser(): Promise<void> {
   const cookieStore = await cookies()
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (token) {
+     // Optional: Call supabase sign out if we want to invalidate it on server
+     await supabase.admin.auth.signOut()
+  }
   cookieStore.delete(SESSION_COOKIE_NAME)
 }
 
@@ -237,17 +296,13 @@ export async function logoutUser(): Promise<void> {
 // ============================================================================
 
 /**
- * Create a new session
+ * Create a new session using Supabase JWT Access Token
  */
-async function createSession(): Promise<void> {
+async function createSession(jwtToken: string): Promise<void> {
   const cookieStore = await cookies()
-  const sessionToken = crypto.randomUUID()
 
-  // Store session in database
-  await upsertSetting('session_token', sessionToken)
-
-  // Set cookie
-  cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
+  // Set cookie with JWT
+  cookieStore.set(SESSION_COOKIE_NAME, jwtToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
@@ -257,7 +312,7 @@ async function createSession(): Promise<void> {
 }
 
 /**
- * Validate current session
+ * Validate current session and return user if active
  */
 export async function validateSession(): Promise<boolean> {
   try {
@@ -266,25 +321,34 @@ export async function validateSession(): Promise<boolean> {
 
     if (!sessionToken) return false
 
-    // Check if token matches stored session
-    const setting = await getSetting('session_token')
-    if (!setting) return false
-
-    const storedToken = setting.value
-    const updatedAt = new Date(setting.updated_at)
-
-    // Check if session is expired
-    const now = new Date()
-    const sessionAge = (now.getTime() - updatedAt.getTime()) / 1000
-    if (sessionAge > SESSION_MAX_AGE) {
-      await logoutUser()
-      return false
+    // We no longer query our own db 'settings' for a session token
+    // We let Supabase validate the token signature and expiration
+    const { data, error } = await supabase.admin.auth.getUser(sessionToken)
+    
+    if (error || !data.user) {
+       console.log('🔍 [validateSession] Token was invalid or expired');
+       // Clean up stale cookir
+       await logoutUser()
+       return false
     }
 
-    return sessionToken === storedToken
-  } catch {
+    return true
+  } catch (error) {
+    console.warn('🔍 [validateSession] Exception:', error)
     return false
   }
+}
+
+/**
+ * Helper to get currently logged user safely in server components
+ */
+export async function getCurrentSessionUser() {
+  const cookieStore = await cookies()
+  const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (!sessionToken) return null;
+
+  const { data } = await supabase.admin.auth.getUser(sessionToken)
+  return data?.user || null
 }
 
 /**
@@ -295,6 +359,7 @@ export async function getUserAuthStatus(): Promise<{
   isSetup: boolean
   isAuthenticated: boolean
   company: Company | null
+  user: any | null
 }> {
   console.log('🔍 [getUserAuthStatus] === START ===')
   // Run in parallel instead of sequentially!
@@ -307,12 +372,13 @@ export async function getUserAuthStatus(): Promise<{
   console.log('🔍 [getUserAuthStatus] isAuthenticated:', isAuthenticated)
 
   // Only fetch company if authenticated 
-  console.log('🔍 [getUserAuthStatus] Fetching company...')
+  console.log('🔍 [getUserAuthStatus] Fetching company and user...')
   const company = isAuthenticated ? await getCompany() : null
+  const user = isAuthenticated ? await getCurrentSessionUser() : null
   console.log('🔍 [getUserAuthStatus] company:', company ? `Found: ${company.name}` : 'null')
 
-  const result = { isSetup, isAuthenticated, company }
-  console.log('🔍 [getUserAuthStatus] Final result:', JSON.stringify(result, null, 2))
+  const result = { isSetup, isAuthenticated, company, user }
+  console.log('🔍 [getUserAuthStatus] Final result:', isAuthenticated ? 'Authenticated' : 'Not Authenticated')
   return result
 }
 

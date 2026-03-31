@@ -18,9 +18,12 @@ export async function GET() {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
+    const adminClient = supabase.admin
+    if (!adminClient) throw new Error('Supabase admin não configurado')
+
     // List all users. 
     // IMPORTANT: This uses the service_role key to bypass RLS and get all users.
-    const { data, error } = await supabase.admin.auth.admin.listUsers()
+    const { data, error } = await adminClient.auth.admin.listUsers()
 
     if (error) throw error
 
@@ -66,7 +69,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const { data, error } = await supabase.admin.auth.admin.createUser({
+    const adminClient = supabase.admin
+    if (!adminClient) throw new Error('Supabase admin não configurado')
+
+    const { data, error } = await adminClient.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
@@ -116,7 +122,10 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Não é possível excluir o próprio usuário' }, { status: 400 })
     }
 
-    const { error } = await supabase.admin.auth.admin.deleteUser(userId)
+    const adminClient = supabase.admin
+    if (!adminClient) throw new Error('Supabase admin não configurado')
+
+    const { error } = await adminClient.auth.admin.deleteUser(userId)
 
     if (error) throw error
 
